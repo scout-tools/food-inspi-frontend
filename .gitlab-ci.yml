@@ -1,0 +1,87 @@
+variables:
+  ANGULAR_APP_NAME: "food-inspi"
+  NPM_CLI_OPTS: "--cache .npm-cache --prefer-offline"
+
+image: node:18
+
+stages:
+  - build
+  - deploy
+
+default:
+  before_script:
+    # Load common logging functions
+    - source .gitlab/scripts/log.sh
+
+.npm-cache:
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm-cache/
+
+build:
+  stage: build
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+  extends:
+    - .npm-cache
+  script:
+    # Log NPM / Node version
+    - log_begin_section "npm_setup" "Setting up NPM"
+    - npm version
+    # Configure NPM to use the instance-level NPM repository for our own scoped packages
+    - npm config set "@${CI_PROJECT_ROOT_NAMESPACE}:registry=${CI_API_V4_URL}/packages/npm/"
+    - npm config set "${CI_API_V4_URL#https:}/packages/npm/:_authToken=\${CI_JOB_TOKEN}"
+    - log_end_section "npm_setup"
+
+    # Install NPM packages
+    - log_begin_section "npm_package_install" "Installing NPM packages"
+    - npm ci ${NPM_CLI_OPTS}
+    - log_end_section "npm_package_install"
+
+    # Create GitLab code quality report
+    - log_begin_section "angular_lint" "Linting Angular application"
+    - npm install ${NPM_CLI_OPTS} --no-save eslint-formatter-gitlab
+    - npx ${NPM_CLI_OPTS} -- ng lint --format=gitlab --force
+    - log_end_section "angular_lint"
+
+    # Execute tests
+    - log_begin_section "angular_test" "Testing Angular application"
+    - npm install ${NPM_CLI_OPTS} --no-save jest-junit
+    - >
+      JEST_JUNIT_OUTPUT_FILE=reports/junit-report.xml
+      npx ${NPM_CLI_OPTS} -- ng test
+      --ci --reporters=default --reporters=jest-junit --coverage-reporters=cobertura --coverage-reporters=text --coverage-directory=reports
+    - log_end_section "angular_test"
+
+    # Build application
+    - log_begin_section "angular_build" "Building Angular application"
+    - npx ${NPM_CLI_OPTS} -- ng build
+    - log_end_section "angular_build"
+
+    # Deploy Generic package
+    - log_begin_section "package_deploy" "Deploying Angular application package"
+    - |
+      APP_VERSION="$( node -p "require('./package.json').version" )"
+      APP_OUTPUT_PATH="$( npx ng config "projects.${ANGULAR_APP_NAME}.architect.build.options.outputPath" )"
+      APP_ARCHIVE="${ANGULAR_APP_NAME}.tar.gz"
+    - tar --create --file "${APP_ARCHIVE}" --directory "${APP_OUTPUT_PATH}" .
+    - >
+      curl
+      --header "JOB-TOKEN: $CI_JOB_TOKEN"
+      --upload-file "${APP_ARCHIVE}" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${ANGULAR_APP_NAME}/${APP_VERSION}/${APP_ARCHIVE}"
+    - log_end_section "package_deploy"
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: reports/cobertura-coverage.xml
+      codequality: reports/gitlab-codequality-report.json
+      junit: reports/junit-report.xml
+    expose_as: Application
+    name: application
+    paths:
+      - dist/

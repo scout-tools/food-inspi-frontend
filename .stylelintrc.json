@@ -1,0 +1,30 @@
+{
+  "overrides": [
+    {
+      "extends": "stylelint-config-standard-scss",
+      "plugins": [
+        "stylelint-no-unsupported-browser-features"
+      ],
+      "files": [
+        "*.scss",
+        "**/*.scss"
+      ],
+      "rules": {
+        "no-empty-source": null,
+        "color-hex-length": "long",
+        "scss/at-rule-no-unknown": [
+          true,
+          {
+            "ignoreAtRules": [ "tailwind", "apply", "layer" ]
+          }
+        ],
+        "function-no-unknown": [
+          true,
+          {
+            "ignoreFunctions": [ "theme" ]
+          }
+        ]
+      }
+    }
+  ]
+}
